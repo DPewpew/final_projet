@@ -1,0 +1,13 @@
+# Secrets
+.streamlit/secrets.toml
+
+# Data brute
+data/data_raw/
+
+# Cache TMDB 
+data/data_processed/tmdb_cache/
+
+# Temp / cache Python
+temp/
+__pycache__/
+*.pyc
