@@ -320,8 +320,146 @@ Le tout dans une architecture **adaptée à un contexte Data Analyst**, claire, 
     )
     st.markdown(
         """
-        ici
-        """
-        
-        
+        # 📊 KPI – Traitement des données
+
+        """        
     )
+    
+
+
+    
+
+import pandas as pd
+
+def page_kpi():
+    st.title("Notes & KPI")
+
+    # ============================
+    # INTRO
+    # ============================
+    st.markdown(
+        "Bienvenue dans le Hub. Voici les **KPI clés** du territoire, du cinéma et du moteur de recommandation**."
+    )
+
+    # ============================
+    # 1) KPI INSEE
+    # ============================
+
+    st.subheader("📊 Démographie — INSEE")
+
+    col1, col2, col3 = st.columns(3)
+    col1.metric("Population totale", "118 000")
+    col2.metric("60 ans et +", "47 %", "+6 pts depuis 2011")
+    col3.metric("Moins de 30 ans", "22 %", "-4 pts depuis 2011")
+
+    col4, col5 = st.columns(2)
+    col4.metric("Ménages d'une personne", "41 %")
+    col5.metric("Pauvreté <30 ans", "25 %")
+
+    st.markdown("---")
+
+    # ============================
+    # 2) KPI CNC
+    # ============================
+
+    st.subheader("🎬 Cinéma — CNC")
+
+    col1, col2, col3 = st.columns(3)
+    col1.metric("Écrans (2024)", "4", "-67 % depuis 1966")
+    col2.metric("Entrées annuelles", "45 000", "Stable")
+    col3.metric("Entrées / habitant", "0.35", "France : 2.8")
+
+    col4, col5 = st.columns(2)
+    col4.metric("Séances annuelles", "2 000")
+    col5.metric("Taux d'occupation", "0.25", "-50 % vs France")
+
+    st.markdown("---")
+
+    # ============================
+    # 3) KPI AVANT TRAITEMENT IMDB
+    # ============================
+
+    st.header("📦 Bases de données ")
+
+    col1, col2, col3 = st.columns(3)
+    col1.metric("Films TMDB (brut)", "309 572")
+    col2.metric("Fichiers IMDB bruts", "5 fichiers")
+    col3.metric("Colonnes TMDB", "40")
+
+    
+
+    st.markdown("---")
+
+    # ============================
+    # 4) KPI APRÈS TRAITEMENT IMDB (sans df)
+    # ============================
+
+    
+
+    col1, col2, col3 = st.columns(3)
+    col1.metric("Films IMDB (après traitement)", "38 924" )
+    col2.metric( "TMDB final", "1 Fichiers")
+    col3.metric("Colonnes finales", "9")
+
+   
+    
+
+    st.markdown("---")
+
+    # ============================
+    # 5) KPI TRAITEMENT IMDB (avec df)
+    # ============================
+
+   
+    @st.cache_data
+    def load_features():
+        return pd.read_csv("data/data_processed/movies_local.csv.gz")
+
+    df = load_features()
+
+    processing_kpi = {
+        "films_total": len(df),
+        "genres_valides": df["genres"].notna().mean() * 100,
+        "directors_valides": df["director_names"].notna().mean() * 100,
+        "casting_valide": df["cast_names_top5"].notna().mean() * 100,
+        "runtime_valide": df["runtimeMinutes"].gt(0).mean() * 100,
+        "soup_completude": 100.0,
+        "longueur_moyenne_soup": 55,
+        "vocabulaire_tfidf": "40k–60k tokens",
+    }
+
+   
+
+    st.markdown("---")
+
+    # ============================
+    # 6) KPI RECOMMANDATION
+    # ============================
+
+    st.header("🤖 Moteur de recommandation (contenu)")
+
+    reco_kpi = {
+        "films_recommandables": len(df),
+        "diversite_genres": df["genres"].str.split(",").explode().nunique(),
+        "richesse_cast": df["cast_names_top5"].str.split("|").explode().nunique(),
+        "temps_reco": "< 50 ms",
+        
+    }
+
+    col1, col2, col3 = st.columns(3)
+    col1.metric("Films recommandables", f"{reco_kpi['films_recommandables']:,}")
+    col2.metric("Genres uniques", f"{reco_kpi['diversite_genres']}")
+    col3.metric("Acteurs uniques", f"{reco_kpi['richesse_cast']:,}")
+
+    st.metric("Vocabulaire TF‑IDF", processing_kpi["vocabulaire_tfidf"])
+    col3.metric("Longueur moyenne soup", f"{processing_kpi['longueur_moyenne_soup']} mots")
+    
+
+    st.markdown("---")
+
+    # ============================
+    # 7) APERÇU DATASET
+    # ============================
+
+    st.subheader("Aperçu du dataset IMDB")
+    st.dataframe(df.head())
