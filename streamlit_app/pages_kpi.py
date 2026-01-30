@@ -71,7 +71,80 @@ def page_kpi():
     col3.metric("Colonnes finales", "9")
 
     st.markdown("---")
+    with st.expander("Filtrage des films"):
+        st.code(
+        """
+        # ============================================================
+        # Construction du catalogue de films à partir des données IMDb
+        # ============================================================
 
+        # 1) Vérification de la présence des fichiers IMDb bruts
+        def ensure_files_exist(paths):
+            # Vérifie que tous les fichiers nécessaires sont disponibles
+            missing = [str(p) for p in paths if not p.exists()]
+            if missing:
+                raise FileNotFoundError(
+                    "Missing required IMDb files:\n- " + "\n- ".join(missing)
+                )
+
+
+        # 2) Filtrage des films pertinents (nettoyage du catalogue)
+        def filter_movies(chunk):
+            # Sélectionne uniquement des films exploitables pour la recommandation
+            return (
+                (chunk["titleType"] == "movie")        # uniquement des films
+                & (chunk["isAdult"].fillna(1) == 0)    # exclusion des contenus adultes
+                & (chunk["startYear"] >= 1980)         # films récents
+                & (chunk["runtimeMinutes"].between(60, 240))  # durée raisonnable
+                & (chunk["genres"].notna())             # genres obligatoires
+            )
+
+
+        # 3) Enrichissement avec les crédits (réalisateurs et casting)
+        def enrich_metadata(movies, crew, principals):
+            # Ajout des noms des réalisateurs
+            movies["director_names"] = crew["directors"].apply(directors_to_names)
+
+            # Sélection et agrégation du top 5 des acteurs par film
+            cast_top5 = (
+                principals
+                .sort_values(["tconst", "ordering"])
+                .groupby("tconst")["actor_name"]
+                .apply(lambda s: "|".join(s.tolist()[:5]))
+            )
+
+            movies = movies.merge(
+                cast_top5.rename("cast_names_top5"),
+                on="tconst",
+                how="left"
+            )
+
+            return movies
+
+
+        # 4) Construction de la représentation textuelle ("soup")
+        def build_soup(row):
+            # Fusion des genres, réalisateurs et acteurs en un texte unique
+            parts = [
+                row["genres"].replace(",", " "),
+                row["director_names"].replace("|", " "),
+                row["cast_names_top5"].replace("|", " "),
+            ]
+
+            # Texte final utilisé par le TF-IDF
+            soup = " ".join(parts).lower()
+            return " ".join(soup.split())  # normalisation des espaces
+        """
+        )
+    
+    
+    
+    
+    
+    
+    
+    
+    st.markdown("---")
     # ============================
     # 5) KPI TRAITEMENT IMDB (avec df)
     # ============================
