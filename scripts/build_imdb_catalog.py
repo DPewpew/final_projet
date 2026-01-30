@@ -1,15 +1,14 @@
 # final_projet/scripts/build_imdb_catalog.py
-# Build:
+# Génère :
 # - data/data_processed/movies_local.csv.gz
 # - data/data_processed/movies_features.csv.gz
 #
-# Constraints:
-# - Filter Option A
-# - Cast top 5 (actor/actress by ordering)
-# - Directors mapped to names
-# - Output files should stay under 100MB (gzip)
+# Contraintes :
+# - Casting top 5 (actor/actress selon le champ ordering)
+# - Réalisateurs convertis en noms (mapping nconst -> primaryName)
+# - Les fichiers de sortie doivent rester < 100MB (gzip)
 #
-# Run from project root:
+# À lancer depuis la racine du projet :
 #   python scripts/build_imdb_catalog.py
 
 from __future__ import annotations
@@ -23,7 +22,7 @@ import pandas as pd
 
 
 # -----------------------------
-# Config
+# Configuration
 # -----------------------------
 MIN_YEAR = 1980
 MIN_VOTES = 1000
@@ -52,25 +51,28 @@ CHUNK_NAMES = 1_000_000
 
 
 # -----------------------------
-# Helpers
+# Fonctions utilitaires
 # -----------------------------
 def ensure_files_exist(paths: List[Path]) -> None:
+    """Vérifie que tous les fichiers nécessaires existent dans data/data_raw."""
     missing = [str(p) for p in paths if not p.exists()]
     if missing:
         raise FileNotFoundError(
-            "Missing required file(s) in data/data_raw:\n- " + "\n- ".join(missing)
+            "Fichier(s) requis manquant(s) dans data/data_raw:\n- " + "\n- ".join(missing)
         )
 
 
 def to_int_series(s: pd.Series) -> pd.Series:
+    """Convertit une série en entier (avec gestion des erreurs et valeurs manquantes)."""
     return pd.to_numeric(s, errors="coerce").astype("Int64")
 
 
 def split_imdb_list(value: str) -> List[str]:
     """
-    IMDb fields like directors can be:
+    Certains champs IMDb (ex: directors) peuvent être :
     - "\\N"
     - "nm0000001,nm0000002"
+    Cette fonction renvoie une liste d’identifiants nconst propres.
     """
     if not isinstance(value, str) or value == r"\N" or value.strip() == "":
         return []
@@ -78,11 +80,12 @@ def split_imdb_list(value: str) -> List[str]:
 
 
 def file_size_mb(path: Path) -> float:
+    """Retourne la taille du fichier en MB."""
     return path.stat().st_size / (1024 * 1024)
 
 
 # -----------------------------
-# Step 1: Filter title.basics (+ later join ratings)
+# Étape 1 : Filtrer title.basics (+ join ratings plus tard)
 # -----------------------------
 def load_filtered_basics() -> pd.DataFrame:
     usecols = [
@@ -118,11 +121,11 @@ def load_filtered_basics() -> pd.DataFrame:
     ):
         total_rows += len(chunk)
 
-        # Normalize types
+        # Normalisation des types
         chunk["startYear"] = to_int_series(chunk["startYear"])
         chunk["runtimeMinutes"] = to_int_series(chunk["runtimeMinutes"])
 
-        # Filters Option A
+        # Filtres Option A
         mask = (
             (chunk["titleType"] == "movie")
             & (chunk["isAdult"].fillna(1) == 0)
@@ -137,7 +140,9 @@ def load_filtered_basics() -> pd.DataFrame:
             & (chunk["genres"] != r"\N")
         )
 
-        filtered = chunk.loc[mask, ["tconst", "primaryTitle", "startYear", "runtimeMinutes", "genres"]]
+        filtered = chunk.loc[
+            mask, ["tconst", "primaryTitle", "startYear", "runtimeMinutes", "genres"]
+        ]
         chunks.append(filtered)
 
         print(f"[basics] scanned={total_rows:,} kept_chunk={len(filtered):,}")
@@ -149,7 +154,7 @@ def load_filtered_basics() -> pd.DataFrame:
 
 
 # -----------------------------
-# Step 2: Join ratings + filter by votes
+# Étape 2 : Joindre ratings + filtre par nb de votes
 # -----------------------------
 def load_ratings_for_tconst(tconst_set: Set[str]) -> pd.DataFrame:
     usecols = ["tconst", "averageRating", "numVotes"]
@@ -168,18 +173,21 @@ def load_ratings_for_tconst(tconst_set: Set[str]) -> pd.DataFrame:
         low_memory=False,
     ):
         total_rows += len(chunk)
+        # On conserve uniquement les lignes dont le tconst est dans notre catalogue filtré
         chunk = chunk[chunk["tconst"].isin(tconst_set)]
         if len(chunk):
             keep_chunks.append(chunk)
         print(f"[ratings] scanned={total_rows:,} matched_chunk={len(chunk):,}")
 
-    ratings = pd.concat(keep_chunks, ignore_index=True) if keep_chunks else pd.DataFrame(columns=usecols)
+    ratings = (
+        pd.concat(keep_chunks, ignore_index=True) if keep_chunks else pd.DataFrame(columns=usecols)
+    )
     print(f"[ratings] matched_total={len(ratings):,}")
     return ratings
 
 
 # -----------------------------
-# Step 3: Crew directors (collect nconst)
+# Étape 3 : Réalisateurs (crew) : récupération des nconst
 # -----------------------------
 def load_directors_for_tconst(tconst_set: Set[str]) -> pd.DataFrame:
     usecols = ["tconst", "directors"]
@@ -209,11 +217,16 @@ def load_directors_for_tconst(tconst_set: Set[str]) -> pd.DataFrame:
 
 
 # -----------------------------
-# Step 4: Principals cast top5 (collect nconst)
+# Étape 4 : Casting top 5 (principals) : récupération des nconst
 # -----------------------------
 def load_cast_topn_for_tconst(tconst_set: Set[str]) -> pd.DataFrame:
     usecols = ["tconst", "ordering", "nconst", "category"]
-    dtypes = {"tconst": "string", "ordering": "Int64", "nconst": "string", "category": "string"}
+    dtypes = {
+        "tconst": "string",
+        "ordering": "Int64",
+        "nconst": "string",
+        "category": "string",
+    }
 
     parts = []
     total_rows = 0
@@ -229,6 +242,7 @@ def load_cast_topn_for_tconst(tconst_set: Set[str]) -> pd.DataFrame:
     ):
         total_rows += len(chunk)
 
+        # On ne garde que les acteurs/actrices et uniquement les 5 premiers par ordering
         chunk = chunk[
             (chunk["tconst"].isin(tconst_set))
             & (chunk["category"].isin(["actor", "actress"]))
@@ -241,16 +255,20 @@ def load_cast_topn_for_tconst(tconst_set: Set[str]) -> pd.DataFrame:
 
         print(f"[principals] scanned={total_rows:,} matched_chunk={len(chunk):,}")
 
-    principals = pd.concat(parts, ignore_index=True) if parts else pd.DataFrame(columns=["tconst", "ordering", "nconst"])
+    principals = (
+        pd.concat(parts, ignore_index=True)
+        if parts
+        else pd.DataFrame(columns=["tconst", "ordering", "nconst"])
+    )
     print(f"[principals] matched_total={len(principals):,}")
 
-    # Ensure ordering
+    # Assurer le bon ordre par film
     principals = principals.sort_values(["tconst", "ordering"], kind="mergesort")
     return principals
 
 
 # -----------------------------
-# Step 5: Build nconst -> primaryName mapping only for needed people
+# Étape 5 : Construire le mapping nconst -> primaryName (uniquement pour les personnes utiles)
 # -----------------------------
 def build_name_map(needed_nconst: Set[str]) -> Dict[str, str]:
     usecols = ["nconst", "primaryName"]
@@ -258,7 +276,6 @@ def build_name_map(needed_nconst: Set[str]) -> Dict[str, str]:
 
     mapping: Dict[str, str] = {}
     total_rows = 0
-    found = 0
 
     for chunk in pd.read_csv(
         NAMES_PATH,
@@ -275,11 +292,10 @@ def build_name_map(needed_nconst: Set[str]) -> Dict[str, str]:
             for nconst, pname in zip(chunk["nconst"].tolist(), chunk["primaryName"].tolist()):
                 if pd.notna(nconst) and pd.notna(pname):
                     mapping[str(nconst)] = str(pname)
-            found += len(chunk)
 
         print(f"[names] scanned={total_rows:,} found_chunk={len(chunk):,} mapped={len(mapping):,}")
 
-        # Early stop if we already mapped all needed IDs (best effort)
+        # Arrêt anticipé si tout est mappé (au mieux)
         if len(mapping) >= len(needed_nconst):
             break
 
@@ -288,35 +304,35 @@ def build_name_map(needed_nconst: Set[str]) -> Dict[str, str]:
 
 
 # -----------------------------
-# Step 6: Assemble movies_local + movies_features
+# Étape 6 : Assembler movies_local + movies_features
 # -----------------------------
 def main() -> None:
     ensure_files_exist([BASICS_PATH, RATINGS_PATH, CREW_PATH, PRINCIPALS_PATH, NAMES_PATH])
 
-    print("=== Step 1/6: Filter basics ===")
+    print("=== Étape 1/6 : Filtrage basics ===")
     basics = load_filtered_basics()
     tconst_set = set(basics["tconst"].astype(str).tolist())
 
-    print("=== Step 2/6: Join ratings + filter votes ===")
+    print("=== Étape 2/6 : Join ratings + filtre votes ===")
     ratings = load_ratings_for_tconst(tconst_set)
 
     movies = basics.merge(ratings, on="tconst", how="inner")
-    # votes filter
+    # Filtre sur le nombre minimal de votes
     movies = movies[movies["numVotes"].notna() & (movies["numVotes"] >= MIN_VOTES)].copy()
     movies["numVotes"] = movies["numVotes"].astype("int64")
     movies["averageRating"] = movies["averageRating"].astype("float32")
 
-    # update tconst_set after votes filter
+    # Mise à jour de tconst_set après filtre votes
     tconst_set = set(movies["tconst"].astype(str).tolist())
     print(f"[catalog] after votes filter kept_total={len(movies):,}")
 
-    print("=== Step 3/6: Directors (crew) ===")
+    print("=== Étape 3/6 : Réalisateurs (crew) ===")
     crew = load_directors_for_tconst(tconst_set)
 
-    print("=== Step 4/6: Cast top 5 (principals) ===")
+    print("=== Étape 4/6 : Casting top 5 (principals) ===")
     principals = load_cast_topn_for_tconst(tconst_set)
 
-    # Collect needed nconst (directors + cast)
+    # Collecte des nconst nécessaires (réalisateurs + casting)
     director_nconst: Set[str] = set()
     for s in crew["directors"].astype(str).tolist():
         director_nconst.update(split_imdb_list(s))
@@ -324,22 +340,25 @@ def main() -> None:
     cast_nconst: Set[str] = set(principals["nconst"].astype(str).tolist())
     needed_nconst = director_nconst.union(cast_nconst)
 
-    print(f"[ids] needed_nconst_total={len(needed_nconst):,} (directors={len(director_nconst):,}, cast={len(cast_nconst):,})")
+    print(
+        f"[ids] needed_nconst_total={len(needed_nconst):,} "
+        f"(directors={len(director_nconst):,}, cast={len(cast_nconst):,})"
+    )
 
-    print("=== Step 5/6: Build name map (nconst -> primaryName) ===")
+    print("=== Étape 5/6 : Mapping des noms (nconst -> primaryName) ===")
     name_map = build_name_map(needed_nconst)
 
-    # Directors: map tconst -> director_names
+    # Réalisateurs : mapping tconst -> director_names
     def directors_to_names(directors_field: str) -> str:
         ids = split_imdb_list(directors_field)
         names = [name_map.get(i) for i in ids]
-        names = [n for n in names if n]  # drop missing
+        names = [n for n in names if n]  # suppression des valeurs manquantes
         return "|".join(names)
 
     crew["director_names"] = crew["directors"].apply(directors_to_names)
     crew = crew[["tconst", "director_names"]]
 
-    # Cast: map principals to names, then aggregate per tconst in ordering
+    # Casting : mapping des nconst en noms puis agrégation par tconst dans l’ordre
     principals["actor_name"] = principals["nconst"].map(name_map).fillna("")
     principals = principals[principals["actor_name"].str.strip() != ""].copy()
 
@@ -351,14 +370,14 @@ def main() -> None:
         .rename(columns={"actor_name": "cast_names_top5"})
     )
 
-    print("=== Step 6/6: Build outputs ===")
+    print("=== Étape 6/6 : Construction des fichiers de sortie ===")
     movies = movies.merge(crew, on="tconst", how="left").merge(cast_agg, on="tconst", how="left")
 
-    # Fill missing credits with empty strings
+    # Remplacer les crédits manquants par des chaînes vides
     movies["director_names"] = movies["director_names"].fillna("")
     movies["cast_names_top5"] = movies["cast_names_top5"].fillna("")
 
-    # Ensure final columns + dtypes
+    # Colonnes finales + types
     movies = movies[
         [
             "tconst",
@@ -376,16 +395,16 @@ def main() -> None:
     movies["startYear"] = movies["startYear"].astype("int32")
     movies["runtimeMinutes"] = movies["runtimeMinutes"].astype("int32")
 
-    # Build features (tconst + soup)
+    # Construction des features (tconst + soup)
     def build_soup(row: pd.Series) -> str:
-        # genres are like "Action,Drama" -> keep commas as separators
+        # genres du type "Action,Drama" -> on remplace les virgules par des espaces
         parts = [
             str(row["genres"]).replace(",", " "),
             str(row["director_names"]).replace("|", " "),
             str(row["cast_names_top5"]).replace("|", " "),
         ]
         soup = " ".join(parts).strip().lower()
-        # normalize whitespace
+        # Normalisation des espaces
         soup = " ".join(soup.split())
         return soup
 
@@ -396,7 +415,7 @@ def main() -> None:
         }
     )
 
-    # Write gzipped CSV
+    # Écriture des CSV compressés gzip
     movies.to_csv(OUT_LOCAL, index=False, compression="gzip")
     features.to_csv(OUT_FEATURES, index=False, compression="gzip")
 
